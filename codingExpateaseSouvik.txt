@@ -1,0 +1,185 @@
+
+✅ Step 1: Setup Environment
+You've already done this in Google Colab:
+# Check pyspark environment is available or not, if not install pyspark by following code:
+!pip install pyspark
+
+
+# Mount the Google Drive to fetch the data from the Google Drive
+from google.colab import drive
+drive.mount('/content/drive')
+
+ ✅ Step 2: Load Dataset
+ # Importing Spark Sessions:
+from pyspark.sql import SparkSession
+# Start Spark session
+spark = SparkSession.builder.appName("SentimentAnalysis").getOrCreate()
+
+
+# Finding my Data Set WHERE exactly the .csv file is to upload for further analysis.
+!find /content/drive/MyDrive -type f -iname "*rerview.csv"
+!find /content/drive/MyDrive -type f -iname "*review*"
+
+Path:: /content/drive/MyDrive/Colab Notebooks/GitHubProjects/pyspark-sentiment-analysis/data/Reviews.csv
+
+# Loding tyhe Data set in the colab Notebook
+df = spark.read.csv("/content/drive/MyDrive/Colab Notebooks/GitHubProjects/pyspark-sentiment-analysis/data/Reviews.csv", header=True, inferSchema=True)
+df.show(5)
+
+df.show()
+
+# Given me the output but somehow I stucked! I will discuss...............
+
+✅ Next Steps
+If the schema looks correct (columns like Score, Text, etc.), then run:
+
+df = df.dropna(subset=["Score", "Text"])
+
+
+Here, 🚨 What's the Real Issue?
+I'm getting this:
+AnalysisException: Syntax error in attribute name: PK...
+hat means the file you're trying to load is not a CSV file, even though it's named Reviews.csv. It's actually a ZIP file, not a plain CSV.
+
+This is why Spark is confused and throwing garbage characters — it's trying to read compressed binary as text.
+
+
+✅ Let's Fix This in 3 Steps
+
+✅ Step 1: Confirm File Type
+Run this to see what type of file it actually is:
+
+!file "/content/drive/MyDrive/Colab Notebooks/GitHubProjects/pyspark-sentiment-analysis/data/Reviews.csv"
+If it says:
+Zip archive data
+
+✅ Step 2: Unzip the File
+
+!unzip "/content/drive/MyDrive/Colab Notebooks/GitHubProjects/pyspark-sentiment-analysis/data/Reviews.csv" -d "/content/drive/MyDrive/Colab Notebooks/GitHubProjects/pyspark-sentiment-analysis/data/"
+This will extract the actual CSV file into the same folder.
+
+Then run:
+!ls "/content/drive/MyDrive/Colab Notebooks/GitHubProjects/pyspark-sentiment-analysis/data/"
+It might list something like:
+Reviews.csv
+or
+AmazonReviews.csv
+
+🧠 Reminder:
+# Use ! before file-related or shell commands
+# Use plain Python syntax for Spark/Pandas/plotting/etc.
+# Colab supports both in the same code notebook ✅
+
+
+✅ Step 3: Load the Extracted CSV File
+Once unzipped, update your PySpark load code:
+
+df = spark.read.csv("/content/drive/MyDrive/Colab Notebooks/GitHubProjects/pyspark-sentiment-analysis/data/REAL_FILENAME.csv",
+                    header=True,
+                    inferSchema=True)
+
+df.show(5, truncate=100)
+
+📌 Replace REAL_FILENAME.csv with the actual file name you see after unzipping (usually it's Reviews.csv, but check spelling and extension).
+If the unzipped file has a strange name, you can rename it:
+!mv "actual_extracted_file.csv" "/content/drive/MyDrive/Colab Notebooks/GitHubProjects/pyspark-sentiment-analysis/data/Reviews.csv"
+
+*** RECAP ***
+| Step              | Command                          |
+| ----------------- | -------------------------------- |
+| Confirm file type | `!file "path"`                   |
+| Unzip if needed   | `!unzip "path.zip" -d "folder"`  |
+| Load clean CSV    | `spark.read.csv("correct_path")` |
+
+
+df.printSchema()
+
+✅ Step 3: Clean the Data
+# Drop rows with missing Score or Text
+df = df.dropna(subset=["Score", "Text"])
+
+# Keep only Score and Text
+df = df.select("Score", "Text")
+
+# Remove neutral reviews (Score == 3)
+df = df.filter(df.Score != 3)
+
+# Add Sentiment column
+from pyspark.sql.functions import when
+
+df = df.withColumn("Sentiment", when(df.Score >= 4, "Positive").otherwise("Negative"))
+
+df.show(5, truncate=100)
+
+
+
+✅ STEP 4: Preprocess Text using TF-IDF
+from pyspark.ml.feature import Tokenizer, StopWordsRemover, HashingTF, IDF, StringIndexer
+
+# Tokenize
+tokenizer = Tokenizer(inputCol="Text", outputCol="Words")
+wordsData = tokenizer.transform(df)
+
+# Remove stopwords
+remover = StopWordsRemover(inputCol="Words", outputCol="Filtered")
+filteredData = remover.transform(wordsData)
+
+# TF features
+hashingTF = HashingTF(inputCol="Filtered", outputCol="RawFeatures", numFeatures=10000)
+featurizedData = hashingTF.transform(filteredData)
+
+# IDF
+idf = IDF(inputCol="RawFeatures", outputCol="Features")
+idfModel = idf.fit(featurizedData)
+rescaledData = idfModel.transform(featurizedData)
+
+# Encode target column
+indexer = StringIndexer(inputCol="Sentiment", outputCol="Label")
+finalData = indexer.fit(rescaledData).transform(rescaledData)
+
+# Preview
+finalData.select("Text", "Sentiment", "Label", "Features").show(5, truncate=100)
+
+
+
+✅ STEP 5: Train-Test Split
+train, test = finalData.randomSplit([0.8, 0.2], seed=42)
+
+
+✅ STEP 6: Train a Classifier (Logistic Regression)
+from pyspark.ml.classification import LogisticRegression
+
+lr = LogisticRegression(featuresCol="Features", labelCol="Label")
+model = lr.fit(train)
+predictions = model.transform(test)
+
+predictions.select("Text", "Sentiment", "prediction", "Label").show(5, truncate=100)
+
+
+
+✅ STEP 7: Evaluate Accuracy
+from pyspark.ml.evaluation import MulticlassClassificationEvaluator
+
+evaluator = MulticlassClassificationEvaluator(
+    labelCol="Label",
+    predictionCol="prediction",
+    metricName="accuracy"
+)
+
+accuracy = evaluator.evaluate(predictions)
+print(f"Model Accuracy: {accuracy:.2f}")
+
+💡 Optional: Evaluate More Metric
+f1 = evaluator.setMetricName("f1").evaluate(predictions)
+precision = evaluator.setMetricName("weightedPrecision").evaluate(predictions)
+recall = evaluator.setMetricName("weightedRecall").evaluate(predictions)
+
+print(f"F1 Score: {f1:.2f}")
+print(f"Precision: {precision:.2f}")
+print(f"Recall: {recall:.2f}")
+
+
+
+🎯 Step 8: Save the Model or Data
+model.save("/content/drive/MyDrive/sentiment_model")
+finalData.write.parquet("/content/drive/MyDrive/sentiment_final.parquet")

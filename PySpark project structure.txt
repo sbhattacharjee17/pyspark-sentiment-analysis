@@ -1,0 +1,98 @@
+# 📊 PySpark Sentiment Analysis Project: Full Pipeline
+# -----------------------------------------------------
+
+# ✅ STEP 1: Install dependencies (if using Google Colab)
+!pip install pyspark
+
+# ✅ STEP 2: Mount Google Drive
+from google.colab import drive
+drive.mount('/content/drive')
+
+# ✅ STEP 3: Load dataset (Make sure the CSV is available in your Drive)
+from pyspark.sql import SparkSession
+spark = SparkSession.builder.appName("SentimentAnalysis").getOrCreate()
+
+file_path = "/content/drive/MyDrive/Colab Notebooks/GitHubProjects/pyspark-sentiment-analysis/data/Reviews.csv"
+df = spark.read.csv(file_path, header=True, inferSchema=True)
+
+# ✅ STEP 4: Data Cleaning and Filtering
+from pyspark.sql.functions import when
+
+df = df.dropna(subset=["Score", "Text"])
+df = df.filter(df.Score != 3)
+df = df.withColumn("label", when(df.Score >= 4, 1).otherwise(0))
+
+# ✅ STEP 5: Preprocessing (Tokenization → Stopword Removal → TF-IDF)
+from pyspark.ml.feature import Tokenizer, StopWordsRemover, HashingTF, IDF
+from pyspark.ml.classification import LogisticRegression
+from pyspark.ml import Pipeline
+
+# Feature pipeline
+tokenizer = Tokenizer(inputCol="Text", outputCol="words")
+stopwords_remover = StopWordsRemover(inputCol="words", outputCol="filtered")
+hashingTF = HashingTF(inputCol="filtered", outputCol="rawFeatures", numFeatures=10000)
+idf = IDF(inputCol="rawFeatures", outputCol="features")
+
+# Model
+lr = LogisticRegression(featuresCol="features", labelCol="label")
+
+# Full Pipeline
+pipeline = Pipeline(stages=[tokenizer, stopwords_remover, hashingTF, idf, lr])
+
+# ✅ STEP 6: Train/Test Split and Model Training
+train_data, test_data = df.randomSplit([0.8, 0.2], seed=42)
+model = pipeline.fit(train_data)
+
+# ✅ STEP 7: Model Evaluation
+from pyspark.ml.evaluation import MulticlassClassificationEvaluator
+
+predictions = model.transform(test_data)
+evaluator = MulticlassClassificationEvaluator(labelCol="label", predictionCol="prediction")
+
+accuracy = evaluator.evaluate(predictions, {evaluator.metricName: "accuracy"})
+f1 = evaluator.evaluate(predictions, {evaluator.metricName: "f1"})
+
+print(f"✅ Accuracy: {accuracy:.2f}")
+print(f"✅ F1 Score: {f1:.2f}")
+
+# ✅ STEP 8: Save the Model to Drive
+model.save("/content/drive/MyDrive/Colab Notebooks/GitHubProjects/pyspark-sentiment-analysis/model/sentiment_model")
+
+# ✅ STEP 9: Save Predictions to CSV
+predictions.select("Text", "label", "prediction").write.csv("/content/drive/MyDrive/Colab Notebooks/GitHubProjects/pyspark-sentiment-analysis/predictions.csv", header=True)
+
+# ✅ STEP 10: Zip & Download Model
+!zip -r "/content/model.zip" "/content/drive/MyDrive/Colab Notebooks/GitHubProjects/pyspark-sentiment-analysis/model"
+from google.colab import files
+files.download("/content/model.zip")
+
+# ✅ OPTIONAL: Zip & Download Entire Project Folder (if needed)
+# !zip -r "/content/pyspark_project.zip" "/content/drive/MyDrive/Colab Notebooks/GitHubProjects/pyspark-sentiment-analysis"
+# files.download("/content/pyspark_project.zip")
+
+# ✅ Move the saved model folder into the project directory in Google Drive
+
+# Ensure the model was saved to this path first:
+model.save("/content/sentiment_model")
+
+# Then move it into your PySpark project structure:
+!mv "/content/sentiment_model" "/content/drive/MyDrive/Colab Notebooks/GitHubProjects/pyspark-sentiment-analysis/model/sentiment_model"
+
+
+# 🔍 CHALLENGES FACED:
+# - Google Colab path errors due to spacing → solved using quotes
+# - FileNotFound errors → fixed by verifying paths with !ls and !find
+# - SyntaxErrors from missing parentheses → resolved with careful code inspection
+# - Model directory confusion → fixed by explicitly moving to correct folder
+
+# ✅ SKILLS USED:
+# - PySpark SQL and DataFrame API
+# - MLlib Pipelines
+# - Logistic Regression
+# - Google Drive and Colab integration
+# - File I/O (CSV, model saving)
+
+# 🌍 REAL-WORLD USAGE:
+# - Analyzing customer review sentiment
+# - Classifying positive/negative feedback at scale
+# - Can be expanded to stream reviews or product analytics
